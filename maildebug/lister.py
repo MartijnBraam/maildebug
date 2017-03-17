@@ -27,27 +27,35 @@ def list_traffic(send_to=None, send_from=None, day=None, delivered=None, directi
         print('Show reject on entry: {}'.format(early_reject))
         print()
 
-        iterator = MessageIterator()
-        for message in iterator.iterate_logs():
-            if early_reject is False and message.status == "Rejected on entry":
+    iterator = MessageIterator()
+    for message in iterator.iterate_logs():
+        if early_reject is False and message.status == "Rejected on entry":
+            continue
+        if send_to:
+            if not send_to.match(message.message_to):
                 continue
-            if send_to:
-                if not send_to.match(message.message_to):
-                    continue
-            if send_from:
-                if not send_from.match(message.message_from):
-                    continue
-            if delivered is not None:
-                if delivered is not message.delivered:
-                    continue
-            if direction:
-                if direction != message.direction:
-                    continue
-            if day:
-                if day.day != message.message_date.day or day.month != message.message_date.month or day.year != message.message_date.year:
-                    continue
+        if send_from:
+            if not send_from.match(message.message_from):
+                continue
+        if delivered is not None:
+            if delivered is not message.delivered:
+                continue
+        if direction:
+            if direction != message.direction:
+                continue
+        if day:
+            if day.day != message.message_date.day or day.month != message.message_date.month or day.year != message.message_date.year:
+                continue
 
-            print(message)
+        print('Date:   {}'.format(message.message_date))
+        print('Status: {}'.format(message.status))
+        if message.queue_id:
+            print('Id:     {}'.format(message.queue_id))
+            print('From:   {}'.format(message.message_from))
+            print('To:     {}'.format(message.message_to))
+            print('Size:   {}'.format(message.size))
+            print('Type:   {}'.format(message.direction))
+        print('')
 
 
 class MessageIterator:
