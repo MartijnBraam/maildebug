@@ -2,6 +2,7 @@ import re
 import textwrap
 import humanize
 from colored import fg, attr
+import datetime
 
 from maildebug.datastructure import ParsedLine
 
@@ -11,32 +12,65 @@ REGEX_POSTFIX_CLEANUP = re.compile(r'postfix/cleanup\[\d+\]: ([^:]+): (.+)')
 REGEX_POSTFIX_QMGR = re.compile(r'postfix/qmgr\[\d+\]: ([^:]+): (.+)')
 REGEX_POSTFIX_QMGR_FROM = re.compile(r'postfix/qmgr\[\d+\]: ([^:]+): from=(.+)')
 REGEX_POSTFIX_QMGR_REMOVED = re.compile(r'postfix/qmgr\[\d+\]: ([^:]+): removed')
-REGEX_POSTFIX_SMTP = re.compile(r'postfix/smtp\[\d+\]: ([^:]+): (.+)')
-REGEX_POSTFIX_SMTP_TO = re.compile(r'postfix/smtp\[\d+\]: ([^:]+): to=(.+)')
+REGEX_POSTFIX_SMTP = re.compile(r'postfix/(?:smtp|pipe)\[\d+\]: ([^:]+): (.+)')
+REGEX_POSTFIX_SMTP_TO = re.compile(r'postfix/(?:smtp|pipe)\[\d+\]: ([^:]+): to=(.+)')
+REGEX_POSTFIX_SMTPD_CONNECT = re.compile(r'postfix/smtpd\[(\d+)\]: connect from ([^\[]+)\[([^\]]+)\]')
+REGEX_POSTFIX_SMTPD_QUEUE = re.compile(r'postfix/smtpd\[(\d+)\]: ([^:]+): client=(.+)')
+REGEX_POSTFIX_SMTPD_NOQUEUE = re.compile(r'postfix/smtpd\[(\d+)\]: NOQUEUE: reject: RCPT from [^ ]+ (.+)')
+REGEX_POSTFIX_SMTPD_DISCONNECT = re.compile(r'postfix/smtpd\[(\d+)\]: disconnect from ([^\[]+)\[([^\]]+)\]')
+REGEX_OPENDKIM = re.compile(r'opendkim\[\d+\]: ([^:]+): (.+)')
+REGEX_AMAVIS_PASS = re.compile(
+    r'amavis\[\d+\]: \([^\)]+\) Passed CLEAN \{([^\}]+)\}, [^ ]+ [^ ]+ [^ ]+ -> [^,]+, Queue-ID: ([^,]+)')
+REGEX_DOVECOT_LDA_SIEVE = re.compile(r'dovecot: lda\(([^\)]+)\): sieve: msgid=([^:]+): (.+)')
+
+REGEX_TIMESTAMP = re.compile(r'^[a-zA-Z]{3} \d{2} \d{2}:\d{2}:\d{2}')
 
 REGEX_SUCCESS_DSN = re.compile(r'2\.\d+\.\d+')
 
 
 def explain_line(line):
+    if REGEX_POSTFIX_SMTPD_CONNECT.search(line):
+        return add_timestamp(explain_postfix_smtpd_connect(line))
+    if REGEX_POSTFIX_SMTPD_DISCONNECT.search(line):
+        return add_timestamp(explain_postfix_smtpd_disconnect(line))
+    if REGEX_POSTFIX_SMTPD_QUEUE.search(line):
+        return add_timestamp(explain_postfix_smtpd_queue(line))
+    if REGEX_POSTFIX_SMTPD_NOQUEUE.search(line):
+        return add_timestamp(explain_postfix_smtpd_noqueue(line))
+    if REGEX_OPENDKIM.search(line):
+        return add_timestamp(explain_opendkim(line))
     if REGEX_POSTFIX_PICKUP.search(line):
-        return explain_postfix_pickup(line)
+        return add_timestamp(explain_postfix_pickup(line))
     if REGEX_POSTFIX_SUBMISSION.search(line):
-        return explain_postfix_submission(line)
+        return add_timestamp(explain_postfix_submission(line))
     if REGEX_POSTFIX_CLEANUP.search(line):
-        return explain_postfix_cleanup(line)
+        return add_timestamp(explain_postfix_cleanup(line))
     if REGEX_POSTFIX_QMGR_FROM.search(line):
-        return explain_postfix_qmgr_from(line)
+        return add_timestamp(explain_postfix_qmgr_from(line))
     if REGEX_POSTFIX_SMTP_TO.search(line):
-        return explain_postfix_smtp_to(line)
+        return add_timestamp(explain_postfix_smtp_to(line))
+    if REGEX_AMAVIS_PASS.search(line):
+        return add_timestamp(explain_amavis_pass(line))
+    if REGEX_DOVECOT_LDA_SIEVE.search(line):
+        return add_timestamp(explain_dovecot_lda_sieve(line))
     if REGEX_POSTFIX_QMGR_REMOVED.search(line):
         result = ParsedLine()
         result.original = line
         result.type = 'complete'
-        return result
+        part = REGEX_POSTFIX_QMGR_REMOVED.search(line)
+        result.queue_id = part.group(1)
+        return add_timestamp(result)
 
     result = ParsedLine()
     result.original = line
     result.type = 'unknown'
+    return add_timestamp(result)
+
+
+def add_timestamp(result):
+    timestamp = REGEX_TIMESTAMP.search(result.original).group(0)
+    timestamp += " " + str(datetime.datetime.now().year)
+    result.timestamp = datetime.datetime.strptime(timestamp, '%b %d %H:%M:%S %Y')
     return result
 
 
@@ -118,12 +152,92 @@ def print_delivery_info(addr, delivery_explanations):
                     print(fg('red') + "\tNot delivered (yet)" + attr(0))
 
 
+def explain_postfix_smtpd_connect(line):
+    result = ParsedLine()
+    result.original = line
+    result.type = 'smtpd'
+    result.subtype = 'connect'
+    part = REGEX_POSTFIX_SMTPD_CONNECT.search(line)
+    result.process = int(part.group(1))
+    result.fields['hostname'] = part.group(2)
+    result.fields['ip'] = part.group(3)
+    return result
+
+
+def explain_postfix_smtpd_disconnect(line):
+    result = ParsedLine()
+    result.original = line
+    result.type = 'smtpd'
+    result.subtype = 'disconnect'
+    part = REGEX_POSTFIX_SMTPD_DISCONNECT.search(line)
+    result.process = int(part.group(1))
+    result.fields['hostname'] = part.group(2)
+    result.fields['ip'] = part.group(3)
+    return result
+
+
+def explain_postfix_smtpd_queue(line):
+    result = ParsedLine()
+    result.original = line
+    result.type = 'smtpd'
+    result.subtype = 'queue'
+    part = REGEX_POSTFIX_SMTPD_QUEUE.search(line)
+    result.process = int(part.group(1))
+    result.queue_id = part.group(2)
+    return result
+
+
+def explain_postfix_smtpd_noqueue(line):
+    result = ParsedLine()
+    result.original = line
+    result.type = 'smtpd'
+    result.subtype = 'noqueue'
+    part = REGEX_POSTFIX_SMTPD_NOQUEUE.search(line)
+    result.process = int(part.group(1))
+    result.fields['message'] = part.group(2)
+    result.reject = True
+    return result
+
+
+def explain_amavis_pass(line):
+    result = ParsedLine()
+    result.original = line
+    result.type = 'amavis'
+    result.subtype = 'pass'
+    part = REGEX_AMAVIS_PASS.search(line)
+    result.fields['type'] = part.group(1)
+    result.queue_id = part.group(2)
+    return result
+
+
+def explain_dovecot_lda_sieve(line):
+    result = ParsedLine()
+    result.original = line
+    result.type = 'dovecot'
+    result.subtype = 'lda'
+    part = REGEX_DOVECOT_LDA_SIEVE.search(line)
+    result.fields['mailbox'] = part.group(1)
+    result.fields['message-id'] = part.group(2)
+    return result
+
+
+def explain_opendkim(line):
+    result = ParsedLine()
+    result.original = line
+    result.type = 'opendkim'
+    part = REGEX_OPENDKIM.search(line)
+    result.queue_id = part.group(1)
+    result.fields['output'] = part.group(2)
+    return result
+
+
 def explain_postfix_pickup(line):
     result = ParsedLine()
     result.original = line
     result.type = 'pickup'
     result.subtype = 'local'
     part = REGEX_POSTFIX_PICKUP.search(line)
+    result.queue_id = part.group(1)
     raw = part.group(2)
     field = raw.split(' ')
     fields = {}
@@ -140,6 +254,7 @@ def explain_postfix_submission(line):
     result.type = 'pickup'
     result.subtype = 'remote-authenticated'
     part = REGEX_POSTFIX_SUBMISSION.search(line)
+    result.queue_id = part.group(1)
     raw = part.group(2)
     field = raw.split(', ')
     fields = {}
@@ -155,6 +270,7 @@ def explain_postfix_cleanup(line):
     result.original = line
     result.type = 'cleanup'
     part = REGEX_POSTFIX_CLEANUP.search(line)
+    result.queue_id = part.group(1)
     raw = part.group(2)
     field = raw.split(', ')
     fields = {}
@@ -170,6 +286,7 @@ def explain_postfix_qmgr_from(line):
     result.original = line
     result.type = 'message'
     part = REGEX_POSTFIX_QMGR.search(line)
+    result.queue_id = part.group(1)
     raw = part.group(2)
     field = raw.split(', ')
     fields = {}
@@ -177,12 +294,7 @@ def explain_postfix_qmgr_from(line):
         name, value = f.split("=", 1)
         if name == "size":
             value = int(value)
-            big_warning = value > 7 * 1024 * 1024
             value = humanize.naturalsize(value)
-            if big_warning:
-                value = fg('red') + value + attr(0)
-            else:
-                value = fg('blue') + value + attr(0)
         fields[name] = value
     result.fields = fields
     return result
@@ -192,11 +304,13 @@ def explain_postfix_smtp_to(line):
     result = ParsedLine()
     result.type = 'delivery'
     result.subtype = 'smtp'
+    result.original = line
     if 'status=' in line:
         before, after = line.split('status=', 1)
         after = after.replace(', ', '. ')
         line = '{}status={}'.format(before, after)
     part = REGEX_POSTFIX_SMTP.search(line)
+    result.queue_id = part.group(1)
     raw = part.group(2)
     field = raw.split(', ')
     fields = {}
@@ -206,4 +320,11 @@ def explain_postfix_smtp_to(line):
     result.fields = fields
     result.receiver = fields['to']
     result.status = fields['dsn']
+
+    if 'relay' in result.fields:
+        if '127.0.0.1' in result.fields['relay']:
+            result.subtype = 'lda'
+        if 'dovecot' in result.fields['relay']:
+            result.subtype = 'lda'
+
     return result

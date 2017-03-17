@@ -10,6 +10,7 @@ def log_line_regex(regex):
     result = []
     for file in files:
         if file.endswith('.gz'):
+            # TODO: Decompress and search
             continue
         with open(file) as handle:
             for line in handle.readlines():
