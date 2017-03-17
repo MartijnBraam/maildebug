@@ -1,16 +1,20 @@
+import re
+
 from maildebug.datastructure import EmailMessage
 from maildebug.explain import explain_line
 from maildebug.guesstimate import find_mail_log
 import ipaddress
 
 
-def list_traffic(send_to=None, send_from=None, day=None, delivered=None, direction=None):
+def list_traffic(send_to=None, send_from=None, day=None, delivered=None, direction=None, early_reject=False):
     if send_to or send_from or day or delivered is not None or direction is not None:
         print('--[ Filters ]--')
         if send_to:
             print('To: {}'.format(send_to))
+            send_to = re.compile(send_to)
         if send_from:
             print('From: {}'.format(send_from))
+            send_from = re.compile(send_from)
         if day:
             print('Day: {:%Y-%m-%d}'.format(day))
         if delivered is not None:
@@ -20,10 +24,29 @@ def list_traffic(send_to=None, send_from=None, day=None, delivered=None, directi
                 print('Delivery: failed')
         if direction is not None:
             print('Direction: {}'.format(direction))
+        print('Show reject on entry: {}'.format(early_reject))
         print()
 
         iterator = MessageIterator()
         for message in iterator.iterate_logs():
+            if early_reject is False and message.status == "Rejected on entry":
+                continue
+            if send_to:
+                if not send_to.match(message.message_to):
+                    continue
+            if send_from:
+                if not send_from.match(message.message_from):
+                    continue
+            if delivered is not None:
+                if delivered is not message.delivered:
+                    continue
+            if direction:
+                if direction != message.direction:
+                    continue
+            if day:
+                if day.day != message.message_date.day or day.month != message.message_date.month or day.year != message.message_date.year:
+                    continue
+
             print(message)
 
 

@@ -18,6 +18,9 @@ def list(parser, context, args):
     parser.add_argument('--from', help='From address (regex)')
     parser.add_argument('--to', help='To address (regex)')
 
+    parser.add_argument('--show-reject-on-entry', help="Show early rejections", action='store_true',
+                        dest='early_reject')
+
     today = date.today().__format__('%Y-%m-%d')
     yesterday = (date.today() - timedelta(-1)).__format__('%Y-%m-%d')
 
@@ -50,7 +53,7 @@ def list(parser, context, args):
         day = datetime.strptime(args.day, '%Y-%m-%d')
 
     maildebug.lister.list_traffic(send_to=args.to, send_from=getattr(args, 'from'), day=day, delivered=args.delivered,
-                                  direction=args.direction)
+                                  direction=args.direction, early_reject=args.early_reject)
 
 
 @subcmd
